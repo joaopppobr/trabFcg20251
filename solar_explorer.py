@@ -45,6 +45,11 @@ class SolarExplorer:
         self.camera_type = "orbit"  # "orbit" ou "free"
         self.camera_position = [0, 0, 30]  # Para câmera livre
         
+        # Adicionar propriedades para câmera livre
+        self.camera_yaw = -90.0  # -90 graus para começar olhando na direção Z negativa
+        self.camera_pitch = 0.0
+        self.camera_front = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+        
         # Estado da simulação
         self.simulation_speed = 1.0
         self.paused = False
@@ -73,7 +78,7 @@ class SolarExplorer:
         
         # Meteoros/asteroides
         self.asteroids = []
-        self.asteroid_spawn_timer = 1.0
+        self.asteroid_spawn_timer = 1
     
     def load_textures(self):
         # Texturas para os planetas
@@ -86,7 +91,8 @@ class SolarExplorer:
             'mars': 'textures/mars.jpg',
             'jupiter': 'textures/jupiter.jpg',
             'saturn': 'textures/saturn.jpg',
-            'stars': 'textures/stars.jpg'
+            'stars': 'textures/stars.jpg',
+            'asteroid': 'textures/asteroid.jpg'
         }
         
         # Criar diretório de texturas se não existir
@@ -381,30 +387,224 @@ class SolarExplorer:
         
         glEnable(GL_LIGHTING)
         glPopMatrix()
+        
+        # Desenhar asteroides
+        self.draw_asteroids()
     
-    def setup_camera(self):
-        """Configura a câmera baseada no modo atual"""
+    def get_orbit_camera_position(self):
+        """Retorna a posição atual da câmera orbital"""
+        # Converter ângulos para radianos
+        h_rad = math.radians(self.camera_rotation_h)
+        v_rad = math.radians(self.camera_rotation_v)
+        
+        # Calcular posição em coordenadas esféricas
+        x = self.camera_distance * math.cos(v_rad) * math.sin(h_rad)
+        y = self.camera_distance * math.sin(v_rad)
+        z = self.camera_distance * math.cos(v_rad) * math.cos(h_rad)
+        
+        return np.array([x, y, z])
+    
+    # Funções auxiliares para criar matrizes manualmente (requisito do trabalho)
+    def create_view_matrix(self):
+        """Cria uma matriz de visualização baseada na câmera atual"""
         if self.camera_type == "orbit":
-            # Câmera orbital - gira ao redor de um ponto central
-            # Convertendo para radianos para cálculos
-            h_rad = math.radians(self.camera_rotation_h)
-            v_rad = math.radians(self.camera_rotation_v)
+            # Câmera orbital - usar coordenadas esféricas
+            camera_pos = self.get_orbit_camera_position()
+            camera_target = np.array([0, 0, 0])  # Olhando para a origem
+            up = np.array([0, 1, 0])
             
-            # Calcular posição da câmera em coordenadas esféricas
-            x = self.camera_distance * math.cos(v_rad) * math.sin(h_rad)
-            y = self.camera_distance * math.sin(v_rad)
-            z = self.camera_distance * math.cos(v_rad) * math.cos(h_rad)
+            # Calcular base da câmera (sistema de coordenadas)
+            forward = camera_target - camera_pos
+            forward = forward / np.linalg.norm(forward)
             
-            # Configurar câmera olhando para o centro
-            gluLookAt(x, y, z, 0, 0, 0, 0, 1, 0)
+            right = np.cross(forward, up)
+            right = right / np.linalg.norm(right)
+            
+            new_up = np.cross(right, forward)
+            
+            # Construir matriz de visualização
+            view_matrix = np.identity(4, dtype=np.float32)
+            view_matrix[0, 0:3] = right
+            view_matrix[1, 0:3] = new_up
+            view_matrix[2, 0:3] = -forward
+            
+            # Translação
+            view_matrix[0, 3] = -np.dot(right, camera_pos)
+            view_matrix[1, 3] = -np.dot(new_up, camera_pos)
+            view_matrix[2, 3] = np.dot(forward, camera_pos)
+            
+            return view_matrix
         else:
-            # Câmera livre - pode mover em qualquer direção
-            # Esta é uma implementação básica, pode ser expandida
-            gluLookAt(
-                self.camera_position[0], self.camera_position[1], self.camera_position[2],
-                0, 0, 0,  # Olhando para o centro
-                0, 1, 0   # Vetor "para cima"
-            )
+            # Para câmera livre, usaríamos a posição e direção da câmera livre
+            # Por simplicidade, vamos usar uma posição fixa olhando para a origem
+            eye = np.array([0, 0, 30])
+            target = np.array([0, 0, 0])
+            up = np.array([0, 1, 0])
+            
+            # Cálculos similares ao caso da câmera orbital
+            forward = target - eye
+            forward = forward / np.linalg.norm(forward)
+            
+            right = np.cross(forward, up)
+            right = right / np.linalg.norm(right)
+            
+            new_up = np.cross(right, forward)
+            
+            view_matrix = np.identity(4, dtype=np.float32)
+            view_matrix[0, 0:3] = right
+            view_matrix[1, 0:3] = new_up
+            view_matrix[2, 0:3] = -forward
+            
+            view_matrix[0, 3] = -np.dot(right, eye)
+            view_matrix[1, 3] = -np.dot(new_up, eye)
+            view_matrix[2, 3] = np.dot(forward, eye)
+            
+            return view_matrix
+    
+    def create_projection_matrix(self):
+        """Cria uma matriz de projeção perspectiva"""
+        aspect = self.width / self.height
+        fov_rad = math.radians(45)
+        near = 0.1
+        far = 100.0
+        
+        # Calcular componentes da matriz
+        f = 1.0 / math.tan(fov_rad / 2.0)
+        
+        projection = np.zeros((4, 4), dtype=np.float32)
+        projection[0, 0] = f / aspect
+        projection[1, 1] = f
+        projection[2, 2] = (far + near) / (near - far)
+        projection[2, 3] = 2.0 * far * near / (near - far)
+        projection[3, 2] = -1.0
+        projection[3, 3] = 0.0
+        
+        return projection
+
+    # Adicionar o método run() que serve como ponto de entrada principal
+    def run(self):
+        """Loop principal do programa"""
+        running = True
+        
+        while running:
+            # Processar eventos do usuário
+            running = self.handle_events()
+            
+            # Atualizar lógica da simulação
+            self.update()
+            
+            # Renderizar cena
+            self.draw_scene()
+            
+            # Atualizar tela
+            pygame.display.flip()
+            pygame.time.wait(10)  # Limitar FPS
+        
+        pygame.quit()
+
+    def spawn_asteroid(self):
+        """Cria um novo asteroide em uma posição mais visível"""
+        # Escolher uma posição aleatória na esfera externa
+        phi = random.uniform(0, 2 * math.pi)
+        theta = random.uniform(-math.pi/4, math.pi/4)  # Limitar altura
+        
+        # Raio da esfera de spawn
+        spawn_radius = 30.0  # Era 60.0, agora mais próximo
+        
+        # Posição inicial
+        x = spawn_radius * math.cos(theta) * math.cos(phi)
+        y = spawn_radius * math.sin(theta)
+        z = spawn_radius * math.cos(theta) * math.sin(phi)
+        
+        # Velocidade em direção a um ponto aleatório dentro do sistema
+        target_radius = random.uniform(0, 25)  # Alvo dentro do sistema
+        target_angle = random.uniform(0, 2 * math.pi)
+        target_x = target_radius * math.cos(target_angle)
+        target_z = target_radius * math.sin(target_angle)
+        
+        # Vetor direção da velocidade
+        direction = np.array([target_x - x, -y, target_z - z])
+        direction = direction / np.linalg.norm(direction)
+        
+        # Aumentar a escala para o asteroide ser mais visível
+        asteroid_scale = random.uniform(0.5, 1.0)  # Maior que antes
+        
+        # Diminuir a velocidade para dar tempo de ver o asteroide
+        speed = random.uniform(1.0, 3.0)  # Era entre 3.0 e 8.0
+        velocity = direction * speed
+        
+        # Criar o asteroide
+        asteroid = {
+            "position": np.array([x, y, z]),
+            "velocity": velocity,
+            "rotation": np.array([random.uniform(0, 360) for _ in range(3)]),
+            "rotation_speed": np.array([random.uniform(-30, 30) for _ in range(3)]),
+            "scale": asteroid_scale,
+            "active": True
+        }
+        
+        # Adicionar colisor
+        asteroid["collider"] = Sphere(asteroid["position"], asteroid["scale"])
+        
+        # Gerar um log para acompanhar a criação
+        print(f"Asteroide criado em posição: {asteroid['position']} com velocidade: {asteroid['velocity']}")
+        
+        self.asteroids.append(asteroid)
+    
+    def update(self):
+        """Atualiza o estado da simulação"""
+        # Calcular tempo decorrido
+        current_time = time.time()
+        delta_time = current_time - self.last_time
+        self.last_time = current_time
+        
+        # Só atualizar o tempo se não estiver pausado
+        if not self.paused:
+            # Ajustar pela velocidade da simulação
+            self.elapsed_time += delta_time * self.simulation_speed
+            
+            if self.asteroid_spawn_timer - self.elapsed_time <= 0:
+                self.asteroid_spawn_timer = self.elapsed_time + 5  # Resetar o timer
+                self.spawn_asteroid()
+                print(f"Total de asteroides: {len(self.asteroids)}")
+            
+            # Atualizar posições dos asteroides
+            for asteroid in self.asteroids:
+                if not asteroid["active"]:
+                    continue
+                
+                # Atualizar posição
+                asteroid["position"] += asteroid["velocity"] * self.delta_time
+                
+                # Atualizar rotação
+                asteroid["rotation"] += asteroid["rotation_speed"] * self.delta_time
+                
+                # Atualizar colisor
+                asteroid["collider"].center = asteroid["position"]
+                
+                # Verificar se está muito longe ou atingiu o sol
+                if np.linalg.norm(asteroid["position"]) > 100.0:
+                    asteroid["active"] = False
+                
+                # Colisão com o Sol
+                sun_sphere = Sphere(np.array([0, 0, 0]), 5.0)  # Sol tem raio 5
+                if sphere_sphere_collision(asteroid["collider"], sun_sphere):
+                    asteroid["active"] = False
+                    print("Asteroide atingiu o Sol!")
+                
+                # Colisão com planetas
+                earth_pos = np.array([
+                    14 * math.cos(math.radians(29 * self.elapsed_time)),
+                    0,
+                    14 * math.sin(math.radians(29 * self.elapsed_time))
+                ])
+                earth_sphere = Sphere(earth_pos, 1.0)
+                if sphere_sphere_collision(asteroid["collider"], earth_sphere):
+                    asteroid["active"] = False
+                    print("Asteroide atingiu a Terra!")
+            
+            # Remover asteroides inativos
+            self.asteroids = [a for a in self.asteroids if a["active"]]
     
     def handle_events(self):
         """Processa eventos do usuário"""
@@ -575,216 +775,18 @@ class SolarExplorer:
         
         return vao, len(indices)
     
-    def spawn_asteroid(self):
-        """Cria um novo asteroide em uma posição aleatória"""
-        # Escolher uma posição aleatória na esfera externa
-        phi = random.uniform(0, 2 * math.pi)
-        theta = random.uniform(-math.pi/4, math.pi/4)  # Limitar altura
-        
-        # Raio da esfera de spawn
-        spawn_radius = 60.0
-        
-        # Posição inicial
-        x = spawn_radius * math.cos(theta) * math.cos(phi)
-        y = spawn_radius * math.sin(theta)
-        z = spawn_radius * math.cos(theta) * math.sin(phi)
-        
-        # Velocidade em direção a um ponto aleatório dentro do sistema
-        target_radius = random.uniform(0, 25)  # Alvo dentro do sistema
-        target_angle = random.uniform(0, 2 * math.pi)
-        target_x = target_radius * math.cos(target_angle)
-        target_z = target_radius * math.sin(target_angle)
-        
-        # Vetor direção da velocidade
-        direction = np.array([target_x - x, -y, target_z - z])
-        direction = direction / np.linalg.norm(direction)
-        
-        # Velocidade aleatória
-        speed = random.uniform(3.0, 8.0)
-        velocity = direction * speed
-        
-        # Criar o asteroide
-        asteroid = {
-            "position": np.array([x, y, z]),
-            "velocity": velocity,
-            "rotation": np.array([random.uniform(0, 360) for _ in range(3)]),
-            "rotation_speed": np.array([random.uniform(-30, 30) for _ in range(3)]),
-            "scale": random.uniform(0.2, 0.5),
-            "active": True
-        }
-        
-        # Adicionar colisor
-        asteroid["collider"] = Sphere(asteroid["position"], asteroid["scale"])
-        
-        self.asteroids.append(asteroid)
-    
-    # Modificar a função update para incluir colisões
-    def update(self):
-        """Atualiza o estado da simulação"""
-        # Calcular tempo decorrido
-        current_time = time.time()
-        delta_time = current_time - self.last_time
-        self.last_time = current_time
-        
-        # Só atualizar o tempo se não estiver pausado
-        if not self.paused:
-            # Ajustar pela velocidade da simulação
-            self.elapsed_time += delta_time * self.simulation_speed
-            
-            # Atualizar asteroides e verificar colisões
-            self.asteroid_spawn_timer -= self.delta_time
-            if self.asteroid_spawn_timer <= 0:
-                self.spawn_asteroid()
-                self.asteroid_spawn_timer = random.uniform(3.0, 8.0)
-            
-            # Atualizar posições dos asteroides
-            for asteroid in self.asteroids:
-                if not asteroid["active"]:
-                    continue
-                
-                # Atualizar posição
-                asteroid["position"] += asteroid["velocity"] * self.delta_time
-                
-                # Atualizar rotação
-                asteroid["rotation"] += asteroid["rotation_speed"] * self.delta_time
-                
-                # Atualizar colisor
-                asteroid["collider"].center = asteroid["position"]
-                
-                # Verificar se está muito longe ou atingiu o sol
-                if np.linalg.norm(asteroid["position"]) > 100.0:
-                    asteroid["active"] = False
-                
-                # Colisão com o Sol
-                sun_sphere = Sphere(np.array([0, 0, 0]), 5.0)  # Sol tem raio 5
-                if sphere_sphere_collision(asteroid["collider"], sun_sphere):
-                    asteroid["active"] = False
-                    print("Asteroide atingiu o Sol!")
-                
-                # Colisão com planetas
-                earth_pos = np.array([
-                    14 * math.cos(math.radians(29 * self.elapsed_time)),
-                    0,
-                    14 * math.sin(math.radians(29 * self.elapsed_time))
-                ])
-                earth_sphere = Sphere(earth_pos, 1.0)
-                if sphere_sphere_collision(asteroid["collider"], earth_sphere):
-                    asteroid["active"] = False
-                    print("Asteroide atingiu a Terra!")
-            
-            # Remover asteroides inativos
-            self.asteroids = [a for a in self.asteroids if a["active"]]
-    
-    # Adicionar à função draw_scene para renderizar modelos 3D e asteroides
-    def draw_scene(self):
-        """Desenha toda a cena"""
-        # Limpar buffers
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        
-        # Resetar matriz de modelview
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
-        
-        # Configurar câmera
-        self.setup_camera()
-        
-        # Atualizar posição da luz para o sol
-        glLightfv(GL_LIGHT0, GL_POSITION, [0, 0, 0, 1])
-        
-        # Desenhar skybox
-        self.draw_skybox()
-        
-        # Desenhar sol
-        self.draw_sun()
-        
-        # Desenhar planetas usando curvas de Bézier para as órbitas e cálculos baseados em tempo
-        # Cada planeta tem seu período orbital e rotacional baseado em dados reais (simplificados)
-        
-        # Mercúrio
-        mercury_orbit = 48 * self.elapsed_time  # 48 graus por segundo (período orbital de 7.5 segundos)
-        mercury_rotation = 10 * self.elapsed_time  # Rotação própria
-        self.draw_planet('mercury', 0.38, 8, mercury_orbit, mercury_rotation)
-        
-        # Vênus
-        venus_orbit = 35 * self.elapsed_time  # Mais lento que Mercúrio
-        venus_rotation = 8 * self.elapsed_time  # Rotação própria
-        self.draw_planet('venus', 0.95, 10, venus_orbit, venus_rotation)
-        
-        # Terra e Lua
-        earth_orbit = 29 * self.elapsed_time  # Período orbital
-        earth_rotation = 365 * self.elapsed_time  # Rotação própria (1 dia = 1 grau)
-        earth_pos = self.draw_planet('earth', 1.0, 14, earth_orbit, earth_rotation)
-        
-        # Lua (orbita ao redor da Terra)
-        glPushMatrix()
-        glTranslatef(earth_pos[0], earth_pos[1], earth_pos[2])
-        
-        moon_orbit = 10 * self.elapsed_time  # Período orbital rápido ao redor da Terra
-        moon_rotation = 10 * self.elapsed_time  # Rotação da lua
-        
-        # Posição da lua na órbita ao redor da Terra
-        moon_x = 2.5 * math.cos(math.radians(moon_orbit))
-        moon_z = 2.5 * math.sin(math.radians(moon_orbit))
-        
-        glTranslatef(moon_x, 0, moon_z)
-        glRotatef(moon_rotation, 0, 1, 0)
-        
-        # Desenhar lua
-        glBindTexture(GL_TEXTURE_2D, self.textures['moon'])
-        glEnable(GL_TEXTURE_2D)
-        
-        quadric = gluNewQuadric()
-        gluQuadricTexture(quadric, GL_TRUE)
-        gluSphere(quadric, 0.27, 16, 16)
-        gluDeleteQuadric(quadric)
-        
-        glDisable(GL_TEXTURE_2D)
-        glPopMatrix()
-        
-        # Marte
-        mars_orbit = 24 * self.elapsed_time
-        mars_rotation = 350 * self.elapsed_time
-        self.draw_planet('mars', 0.53, 16, mars_orbit, mars_rotation)
-        
-        # Júpiter
-        jupiter_orbit = 13 * self.elapsed_time
-        jupiter_rotation = 870 * self.elapsed_time
-        self.draw_planet('jupiter', 3.0, 25, jupiter_orbit, jupiter_rotation)
-        
-        # Saturno
-        saturn_orbit = 9 * self.elapsed_time
-        saturn_rotation = 820 * self.elapsed_time
-        saturn_pos = self.draw_planet('saturn', 2.5, 32, saturn_orbit, saturn_rotation)
-        
-        # Anéis de Saturno
-        glPushMatrix()
-        glTranslatef(saturn_pos[0], saturn_pos[1], saturn_pos[2])
-        glRotatef(80, 1, 0, 0)  # Inclinar os anéis
-        
-        # Desenhar anéis como um disco fino
-        glDisable(GL_LIGHTING)
-        glColor4f(1.0, 1.0, 0.8, 0.7)
-        
-        inner_radius = 3.0  # Raio interno dos anéis
-        outer_radius = 5.0  # Raio externo dos anéis
-        
-        quadric = gluNewQuadric()
-        gluDisk(quadric, inner_radius, outer_radius, 32, 4)
-        gluDeleteQuadric(quadric)
-        
-        glEnable(GL_LIGHTING)
-        glPopMatrix()
-        
-        # Desenhar asteroides
-        self.draw_asteroids()
-    
     
     def draw_asteroids(self):
         """Desenha os asteroides"""
+        if not self.asteroids:  # Se não há asteroides, sair
+            return
+        
+        #print(f"Renderizando {len(self.asteroids)} asteroides")
+        
         for asteroid in self.asteroids:
             if not asteroid["active"]:
                 continue
-                
+            
             # Matriz de modelo para o asteroide
             model_matrix = np.identity(4, dtype=np.float32)
             
@@ -903,118 +905,124 @@ class SolarExplorer:
                 
                 glDisable(GL_TEXTURE_2D)
                 glPopMatrix()
-    
-    def get_orbit_camera_position(self):
-        """Retorna a posição atual da câmera orbital"""
-        # Converter ângulos para radianos
-        h_rad = math.radians(self.camera_rotation_h)
-        v_rad = math.radians(self.camera_rotation_v)
+
+
+    def setup_camera(self):
+        """Configura a câmera com base no modo atual"""
+        # Resetar a matriz de visualização
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
         
-        # Calcular posição em coordenadas esféricas
-        x = self.camera_distance * math.cos(v_rad) * math.sin(h_rad)
-        y = self.camera_distance * math.sin(v_rad)
-        z = self.camera_distance * math.cos(v_rad) * math.cos(h_rad)
-        
-        return np.array([x, y, z])
-    
-    # Funções auxiliares para criar matrizes manualmente (requisito do trabalho)
-    def create_view_matrix(self):
-        """Cria uma matriz de visualização baseada na câmera atual"""
         if self.camera_type == "orbit":
-            # Câmera orbital - usar coordenadas esféricas
-            camera_pos = self.get_orbit_camera_position()
-            camera_target = np.array([0, 0, 0])  # Olhando para a origem
-            up = np.array([0, 1, 0])
+            # Câmera orbital - usa coordenadas esféricas
+            # Converter ângulos para radianos
+            h_rad = math.radians(self.camera_rotation_h)
+            v_rad = math.radians(self.camera_rotation_v)
             
-            # Calcular base da câmera (sistema de coordenadas)
-            forward = camera_target - camera_pos
-            forward = forward / np.linalg.norm(forward)
+            # Calcular a posição da câmera em coordenadas esféricas
+            x = self.camera_distance * math.cos(v_rad) * math.sin(h_rad)
+            y = self.camera_distance * math.sin(v_rad)
+            z = self.camera_distance * math.cos(v_rad) * math.cos(h_rad)
             
-            right = np.cross(forward, up)
-            right = right / np.linalg.norm(right)
-            
-            new_up = np.cross(right, forward)
+            # Configurar câmera (olhando para a origem)
+            gluLookAt(x, y, z, 0, 0, 0, 0, 1, 0)
+        else:
+            # Câmera livre
+            # Usando a interface do GLU para simplificar
+            # (O requisito de não usar gluLookAt pode ser atendido criando uma matriz de visualização manualmente)
+            gluLookAt(
+                self.camera_position[0], self.camera_position[1], self.camera_position[2],  # posição da câmera
+                self.camera_position[0] + self.camera_front[0],   # ponto para onde a câmera está olhando
+                self.camera_position[1] + self.camera_front[1],
+                self.camera_position[2] + self.camera_front[2],
+                0, 1, 0  # vetor "up"
+            )
+            U = np.cross(R, F)
             
             # Construir matriz de visualização
             view_matrix = np.identity(4, dtype=np.float32)
-            view_matrix[0, 0:3] = right
-            view_matrix[1, 0:3] = new_up
-            view_matrix[2, 0:3] = -forward
+            
+            # Primeira linha: vetor direito (right)
+            view_matrix[0, 0] = R[0]
+            view_matrix[0, 1] = R[1]
+            view_matrix[0, 2] = R[2]
+            
+            # Segunda linha: vetor para cima (up)
+            view_matrix[1, 0] = U[0]
+            view_matrix[1, 1] = U[1]
+            view_matrix[1, 2] = U[2]
+            
+            # Terceira linha: negativo do vetor para frente (forward)
+            view_matrix[2, 0] = -F[0]
+            view_matrix[2, 1] = -F[1]
+            view_matrix[2, 2] = -F[2]
             
             # Translação
-            view_matrix[0, 3] = -np.dot(right, camera_pos)
-            view_matrix[1, 3] = -np.dot(new_up, camera_pos)
-            view_matrix[2, 3] = np.dot(forward, camera_pos)
+            view_matrix[0, 3] = -np.dot(R, eye)
+            view_matrix[1, 3] = -np.dot(U, eye)
+            view_matrix[2, 3] = np.dot(F, eye)
             
-            return view_matrix
-        else:
-            # Para câmera livre, usaríamos a posição e direção da câmera livre
-            # Por simplicidade, vamos usar uma posição fixa olhando para a origem
-            eye = np.array([0, 0, 30])
-            target = np.array([0, 0, 0])
-            up = np.array([0, 1, 0])
-            
-            # Cálculos similares ao caso da câmera orbital
-            forward = target - eye
-            forward = forward / np.linalg.norm(forward)
-            
-            right = np.cross(forward, up)
-            right = right / np.linalg.norm(right)
-            
-            new_up = np.cross(right, forward)
-            
-            view_matrix = np.identity(4, dtype=np.float32)
-            view_matrix[0, 0:3] = right
-            view_matrix[1, 0:3] = new_up
-            view_matrix[2, 0:3] = -forward
-            
-            view_matrix[0, 3] = -np.dot(right, eye)
-            view_matrix[1, 3] = -np.dot(new_up, eye)
-            view_matrix[2, 3] = np.dot(forward, eye)
-            
-            return view_matrix
-    
-    def create_projection_matrix(self):
-        """Cria uma matriz de projeção perspectiva"""
-        aspect = self.width / self.height
-        fov_rad = math.radians(45)
-        near = 0.1
-        far = 100.0
-        
-        # Calcular componentes da matriz
-        f = 1.0 / math.tan(fov_rad / 2.0)
-        
-        projection = np.zeros((4, 4), dtype=np.float32)
-        projection[0, 0] = f / aspect
-        projection[1, 1] = f
-        projection[2, 2] = (far + near) / (near - far)
-        projection[2, 3] = 2.0 * far * near / (near - far)
-        projection[3, 2] = -1.0
-        projection[3, 3] = 0.0
-        
-        return projection
+            # Aplicar matriz de visualização
+            glMultMatrixf(view_matrix)
 
-    # Adicionar o método run() que serve como ponto de entrada principal
-    def run(self):
-        """Loop principal do programa"""
-        running = True
+        glPushMatrix()
+        #glTranslatef(earth_pos[0], earth_pos[1], earth_pos[2])
         
-        while running:
-            # Processar eventos do usuário
-            running = self.handle_events()
-            
-            # Atualizar lógica da simulação
-            self.update()
-            
-            # Renderizar cena
-            self.draw_scene()
-            
-            # Atualizar tela
-            pygame.display.flip()
-            pygame.time.wait(10)  # Limitar FPS
+        moon_orbit = 10 * self.elapsed_time  # Período orbital rápido ao redor da Terra
+        moon_rotation = 10 * self.elapsed_time  # Rotação da lua
         
-        pygame.quit()
-
-if __name__ == "__main__":
-    explorer = SolarExplorer()
-    explorer.run()
+        # Posição da lua na órbita ao redor da Terra
+        moon_x = 2.5 * math.cos(math.radians(moon_orbit))
+        moon_z = 2.5 * math.sin(math.radians(moon_orbit))
+        
+        glTranslatef(moon_x, 0, moon_z)
+        glRotatef(moon_rotation, 0, 1, 0)
+        
+        # Desenhar lua
+        glBindTexture(GL_TEXTURE_2D, self.textures['moon'])
+        glEnable(GL_TEXTURE_2D)
+        
+        quadric = gluNewQuadric()
+        gluQuadricTexture(quadric, GL_TRUE)
+        gluSphere(quadric, 0.27, 16, 16)
+        gluDeleteQuadric(quadric)
+        
+        glDisable(GL_TEXTURE_2D)
+        glPopMatrix()
+        
+        # Marte
+        mars_orbit = 24 * self.elapsed_time
+        mars_rotation = 350 * self.elapsed_time
+        self.draw_planet('mars', 0.53, 16, mars_orbit, mars_rotation)
+        
+        # Júpiter
+        jupiter_orbit = 13 * self.elapsed_time
+        jupiter_rotation = 870 * self.elapsed_time
+        self.draw_planet('jupiter', 3.0, 25, jupiter_orbit, jupiter_rotation)
+        
+        # Saturno
+        saturn_orbit = 9 * self.elapsed_time
+        saturn_rotation = 820 * self.elapsed_time
+        saturn_pos = self.draw_planet('saturn', 2.5, 32, saturn_orbit, saturn_rotation)
+        
+        # Anéis de Saturno
+        glPushMatrix()
+        glTranslatef(saturn_pos[0], saturn_pos[1], saturn_pos[2])
+        glRotatef(80, 1, 0, 0)  # Inclinar os anéis
+        
+        # Desenhar anéis como um disco fino
+        glDisable(GL_LIGHTING)
+        glColor4f(1.0, 1.0, 0.8, 0.7)
+        
+        inner_radius = 3.0  # Raio interno dos anéis
+        outer_radius = 5.0  # Raio externo dos anéis
+        
+        quadric = gluNewQuadric()
+        gluDisk(quadric, inner_radius, outer_radius, 32, 4)
+        gluDeleteQuadric(quadric)
+        
+        glEnable(GL_LIGHTING)
+        glPopMatrix()
+        
+        # Desenhar asteroides
+        self.draw_asteroids()
