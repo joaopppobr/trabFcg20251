@@ -22,17 +22,19 @@ def create_program(vertex_src, fragment_src):
     gl.glDeleteShader(fs)
     return program
 
-# Lambert (difusa) + Blinn-Phong (specular) - para uso em Gouraud e Phong
+# Lambert (difusa) + Blinn-Phong (specular) + textura
 VERTEX_SHADER_GOURAUD = """
 #version 120
 attribute vec3 position;
 attribute vec3 normal;
+attribute vec2 texcoord;
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 uniform vec3 lightPos;
 uniform vec3 viewPos;
 varying vec3 color;
+varying vec2 v_texcoord;
 
 void main() {
     vec3 N = normalize(mat3(model) * normal);
@@ -40,25 +42,27 @@ void main() {
     vec3 V = normalize(viewPos - vec3(model * vec4(position, 1.0)));
     vec3 H = normalize(L + V);
 
-    // Lambert
     float diff = max(dot(N, L), 0.0);
-    // Blinn-Phong
     float spec = pow(max(dot(N, H), 0.0), 32.0);
 
-    vec3 diffuse = diff * vec3(1.0, 0.7, 0.3);
+    vec3 diffuse = diff * vec3(1.0, 1.0, 1.0);
     vec3 specular = spec * vec3(1.0);
-    vec3 ambient = 0.15 * vec3(1.0, 0.7, 0.3);
+    vec3 ambient = 0.15 * vec3(1.0, 1.0, 1.0);
 
     color = ambient + diffuse + specular;
+    v_texcoord = texcoord;
     gl_Position = projection * view * model * vec4(position, 1.0);
 }
 """
 
 FRAGMENT_SHADER_GOURAUD = """
 #version 120
+uniform sampler2D tex;
 varying vec3 color;
+varying vec2 v_texcoord;
 void main() {
-    gl_FragColor = vec4(color, 1.0);
+    vec4 texColor = texture2D(tex, v_texcoord);
+    gl_FragColor = vec4(color, 1.0) * texColor;
 }
 """
 
@@ -66,14 +70,17 @@ VERTEX_SHADER_PHONG = """
 #version 120
 attribute vec3 position;
 attribute vec3 normal;
+attribute vec2 texcoord;
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 varying vec3 fragPos;
 varying vec3 fragNormal;
+varying vec2 v_texcoord;
 void main() {
     fragPos = vec3(model * vec4(position, 1.0));
     fragNormal = normalize(mat3(model) * normal);
+    v_texcoord = texcoord;
     gl_Position = projection * view * model * vec4(position, 1.0);
 }
 """
@@ -82,8 +89,10 @@ FRAGMENT_SHADER_PHONG = """
 #version 120
 uniform vec3 lightPos;
 uniform vec3 viewPos;
+uniform sampler2D tex;
 varying vec3 fragPos;
 varying vec3 fragNormal;
+varying vec2 v_texcoord;
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 L = normalize(lightPos - fragPos);
@@ -93,12 +102,13 @@ void main() {
     float diff = max(dot(N, L), 0.0);
     float spec = pow(max(dot(N, H), 0.0), 32.0);
 
-    vec3 diffuse = diff * vec3(0.3, 0.7, 1.0);
+    vec3 diffuse = diff * vec3(1.0, 1.0, 1.0);
     vec3 specular = spec * vec3(1.0);
-    vec3 ambient = 0.15 * vec3(0.3, 0.7, 1.0);
+    vec3 ambient = 0.15 * vec3(1.0, 1.0, 1.0);
 
     vec3 color = ambient + diffuse + specular;
-    gl_FragColor = vec4(color, 1.0);
+    vec4 texColor = texture2D(tex, v_texcoord);
+    gl_FragColor = vec4(color, 1.0) * texColor;
 }
 """
 

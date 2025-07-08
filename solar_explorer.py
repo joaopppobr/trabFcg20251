@@ -12,7 +12,8 @@ from OpenGL.GL import (
     GL_AMBIENT_AND_DIFFUSE, GL_POSITION, GL_DIFFUSE, GL_SPECULAR, GL_SMOOTH, GL_TEXTURE_2D,
     GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR, GL_RGBA, GL_UNSIGNED_BYTE, GL_RGB,
     GL_LINE_LOOP, GL_LINE_STRIP, GL_FLOAT, GL_FALSE, GL_ARRAY_BUFFER, GL_STATIC_DRAW, GL_ELEMENT_ARRAY_BUFFER,
-    GL_TRIANGLES, GL_UNSIGNED_INT, GL_CW, GL_CCW, GL_TRUE, GL_TEXTURE0, GL_DEPTH_TEST, glLoadMatrixf
+    GL_TRIANGLES, GL_UNSIGNED_INT, GL_CW, GL_CCW, GL_TRUE, GL_TEXTURE0, GL_DEPTH_TEST, glLoadMatrixf,
+    glGetAttribLocation
 )
 from OpenGL.GLU import (
     gluNewQuadric, gluQuadricTexture, gluSphere, gluDeleteQuadric, gluDisk
@@ -27,6 +28,8 @@ import ctypes
 
 # Importar os módulos que criamos
 from collisions import *
+from shading_models import get_gouraud_program, get_phong_program
+import OpenGL.GL as gl
 
 class SolarExplorer:
     def __init__(self, width=1280, height=720):
@@ -59,7 +62,7 @@ class SolarExplorer:
         self.camera_rotation_h = 0  # Rotação horizontal em graus
         self.camera_rotation_v = 15  # Rotação vertical em graus
         self.camera_type = "orbit"  # "orbit" ou "free"
-        self.camera_position = [0, 0, 30]  # Para câmera livre
+        self.camera_position = [0, 0, 30]  # Para câmera livres
         
         # Adicionar propriedades para câmera livre
         self.camera_yaw = -90.0  # -90 graus para começar olhando na direção Z negativa
@@ -105,6 +108,10 @@ class SolarExplorer:
         # Controle de arrasto do asteroide
         self.asteroid_dragging = False
         self.asteroid_last_mouse = None
+
+        self.gouraud_prog = get_gouraud_program()
+        self.phong_prog = get_phong_program()
+        self.sphere_vao, self.sphere_vbo, self.sphere_nbo, self.sphere_tbo, self.sphere_ebo, self.sphere_index_count = self.create_sphere_mesh(1.0, 32, 16)
     
     def load_textures(self):
         # Texturas para os planetas
@@ -214,30 +221,25 @@ class SolarExplorer:
     
     def draw_skybox(self):
         """Desenha o fundo estrelado"""
-        glDisable(GL_LIGHTING)  # Desativar iluminação para o céu
-        
+        glDisable(GL_LIGHTING)
+        glPushMatrix()
+        # Centraliza a skybox na posição da câmera para que ela nunca "afaste"
+        if self.camera_type == "orbit":
+            cam = self.get_orbit_camera_position()
+        else:
+            cam = np.array(self.camera_position)
+        glTranslatef(cam[0], cam[1], cam[2])
         glBindTexture(GL_TEXTURE_2D, self.textures['stars'])
         glEnable(GL_TEXTURE_2D)
-        
-        # Salvar matriz atual
-        glPushMatrix()
-        
-        # Inverter as normais para desenhar por dentro
         glFrontFace(GL_CW)
-        
-        # Desenhar esfera para o céu
         quadric = gluNewQuadric()
         gluQuadricTexture(quadric, GL_TRUE)
         gluSphere(quadric, 90.0, 32, 32)
         gluDeleteQuadric(quadric)
-        
-        # Restaurar orientação das normais
         glFrontFace(GL_CCW)
-        
-        glPopMatrix()
-        
         glDisable(GL_TEXTURE_2D)
-        glEnable(GL_LIGHTING)  # Reativar iluminação
+        glPopMatrix()
+        glEnable(GL_LIGHTING)
     
     def draw_sun(self):
         """Desenha o sol"""
@@ -703,6 +705,101 @@ class SolarExplorer:
         pygame.display.flip()
         pygame.time.wait(1200)  # 1.2 segundos
 
+    def create_sphere_mesh(self, radius, slices, stacks):
+        """Cria a malha para uma esfera com coordenadas de textura"""
+        vertices = []
+        normals = []
+        texcoords = []
+        indices = []
+        for i in range(stacks + 1):
+            lat = math.pi * i / stacks
+            v = i / stacks
+            for j in range(slices + 1):
+                lon = 2 * math.pi * j / slices
+                u = j / slices
+                x = radius * math.sin(lat) * math.cos(lon)
+                y = radius * math.cos(lat)
+                z = radius * math.sin(lat) * math.sin(lon)
+                vertices.extend([x, y, z])
+                normals.extend([math.sin(lat) * math.cos(lon), math.cos(lat), math.sin(lat) * math.sin(lon)])
+                texcoords.extend([u, 1 - v])
+        for i in range(stacks):
+            for j in range(slices):
+                first = i * (slices + 1) + j
+                second = first + slices + 1
+                indices.extend([first, second, first + 1])
+                indices.extend([second, second + 1, first + 1])
+        vertices = np.array(vertices, dtype=np.float32)
+        normals = np.array(normals, dtype=np.float32)
+        texcoords = np.array(texcoords, dtype=np.float32)
+        indices = np.array(indices, dtype=np.uint32)
+        vao = glGenVertexArrays(1)
+        glBindVertexArray(vao)
+        vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+        nbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, nbo)
+        glBufferData(GL_ARRAY_BUFFER, normals.nbytes, normals, GL_STATIC_DRAW)
+        tbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, tbo)
+        glBufferData(GL_ARRAY_BUFFER, texcoords.nbytes, texcoords, GL_STATIC_DRAW)
+        ebo = glGenBuffers(1)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+        glBindVertexArray(0)
+        return vao, vbo, nbo, tbo, ebo, len(indices)
+
+    def draw_sphere_shader(self, program, position, scale=1.0, texture=None):
+        gl.glUseProgram(program)
+        model = np.identity(4, dtype=np.float32)
+        model[:3, 3] = position
+        model[:3, :3] *= scale
+        loc_model = gl.glGetUniformLocation(program, "model")
+        loc_view = gl.glGetUniformLocation(program, "view")
+        loc_proj = gl.glGetUniformLocation(program, "projection")
+        loc_light = gl.glGetUniformLocation(program, "lightPos")
+        loc_viewpos = gl.glGetUniformLocation(program, "viewPos")
+        gl.glUniformMatrix4fv(loc_model, 1, gl.GL_TRUE, model)
+        gl.glUniformMatrix4fv(loc_view, 1, gl.GL_TRUE, self.create_view_matrix())
+        gl.glUniformMatrix4fv(loc_proj, 1, gl.GL_TRUE, self.create_projection_matrix())
+        gl.glUniform3f(loc_light, 0, 0, 0)
+        cam_pos = self.get_orbit_camera_position() if self.camera_type == "orbit" else np.array(self.camera_position)
+        gl.glUniform3f(loc_viewpos, *cam_pos)
+        # Bind texture if provided
+        if texture is not None:
+            gl.glActiveTexture(gl.GL_TEXTURE0)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, texture)
+            tex_loc = gl.glGetUniformLocation(program, "tex")
+            if tex_loc != -1:
+                gl.glUniform1i(tex_loc, 0)
+        gl.glBindVertexArray(self.sphere_vao)
+        pos_loc = gl.glGetAttribLocation(program, "position")
+        norm_loc = gl.glGetAttribLocation(program, "normal")
+        tex_loc = gl.glGetAttribLocation(program, "texcoord")
+        # VBO posição
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.sphere_vbo)
+        gl.glEnableVertexAttribArray(pos_loc)
+        gl.glVertexAttribPointer(pos_loc, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+        # VBO normal
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.sphere_nbo)
+        gl.glEnableVertexAttribArray(norm_loc)
+        gl.glVertexAttribPointer(norm_loc, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+        # VBO texcoord
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.sphere_tbo)
+        gl.glEnableVertexAttribArray(tex_loc)
+        gl.glVertexAttribPointer(tex_loc, 2, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+        # EBO
+        gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, self.sphere_ebo)
+        gl.glDrawElements(gl.GL_TRIANGLES, self.sphere_index_count, gl.GL_UNSIGNED_INT, None)
+        gl.glDisableVertexAttribArray(pos_loc)
+        gl.glDisableVertexAttribArray(norm_loc)
+        gl.glDisableVertexAttribArray(tex_loc)
+        gl.glBindVertexArray(0)
+        if texture is not None:
+            gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        gl.glUseProgram(0)
+
     def draw_scene(self):
         """Desenha toda a cena"""
         # Limpar buffers
@@ -727,101 +824,93 @@ class SolarExplorer:
         # Desenhar planetas usando curvas de Bézier para as órbitas e cálculos baseados em tempo
         # Cada planeta tem seu período orbital e rotacional baseado em dados reais (simplificados)
         
-        # Mercúrio
-        mercury_orbit = 48 * self.elapsed_time  # 48 graus por segundo (período orbital de 7.5 segundos)
-        mercury_rotation = 10 * self.elapsed_time  # Rotação própria
-        self.draw_planet('mercury', 0.38, 8, mercury_orbit, mercury_rotation)
-        
-        # Vênus
-        venus_orbit = 35 * self.elapsed_time  # Mais lento que Mercúrio
-        venus_rotation = 8 * self.elapsed_time  # Rotação própria
-        self.draw_planet('venus', 0.95, 10, venus_orbit, venus_rotation)
-        
-        # Terra e Lua
-        earth_orbit = 29 * self.elapsed_time  # Período orbital
-        earth_rotation = 365 * self.elapsed_time  # Rotação própria (1 dia = 1 grau)
-        earth_pos = self.draw_planet('earth', 1.0, 14, earth_orbit, earth_rotation)
-        
+        # Mercúrio (Gouraud + textura)
+        mercury_orbit = 48 * self.elapsed_time
+        mercury_rotation = 10 * self.elapsed_time
+        mercury_x = 8 * math.cos(math.radians(mercury_orbit))
+        mercury_z = 8 * math.sin(math.radians(mercury_orbit))
+        if self.show_orbits:
+            self.draw_orbit(8)
+        self.draw_sphere_shader(self.gouraud_prog, position=[mercury_x, 0, mercury_z], scale=0.38, texture=self.textures['mercury'])
+
+        # Vênus (Gouraud + textura)
+        venus_orbit = 35 * self.elapsed_time
+        venus_rotation = 8 * self.elapsed_time
+        venus_x = 10 * math.cos(math.radians(venus_orbit))
+        venus_z = 10 * math.sin(math.radians(venus_orbit))
+        if self.show_orbits:
+            self.draw_orbit(10)
+        self.draw_sphere_shader(self.gouraud_prog, position=[venus_x, 0, venus_z], scale=0.95, texture=self.textures['venus'])
+
+        # Terra (Gouraud + textura)
+        earth_orbit = 29 * self.elapsed_time
+        earth_rotation = 365 * self.elapsed_time
+        earth_x = 14 * math.cos(math.radians(earth_orbit))
+        earth_z = 14 * math.sin(math.radians(earth_orbit))
+        if self.show_orbits:
+            self.draw_orbit(14)
+        self.draw_sphere_shader(self.gouraud_prog, position=[earth_x, 0, earth_z], scale=1.0, texture=self.textures['earth'])
+
         # Lua (orbita ao redor da Terra)
         glPushMatrix()
-        glTranslatef(earth_pos[0], earth_pos[1], earth_pos[2])
-        
-        moon_orbit = 10 * self.elapsed_time  # Período orbital rápido ao redor da Terra
-        moon_rotation = 10 * self.elapsed_time  # Rotação da lua
-        
-        # Posição da lua na órbita ao redor da Terra
+        glTranslatef(earth_x, 0, earth_z)
+        moon_orbit = 10 * self.elapsed_time
+        moon_rotation = 10 * self.elapsed_time
         moon_x = 2.5 * math.cos(math.radians(moon_orbit))
         moon_z = 2.5 * math.sin(math.radians(moon_orbit))
-        
         glTranslatef(moon_x, 0, moon_z)
         glRotatef(moon_rotation, 0, 1, 0)
-        
-        # Desenhar lua
         glBindTexture(GL_TEXTURE_2D, self.textures['moon'])
         glEnable(GL_TEXTURE_2D)
-        
         quadric = gluNewQuadric()
         gluQuadricTexture(quadric, GL_TRUE)
         gluSphere(quadric, 0.27, 16, 16)
         gluDeleteQuadric(quadric)
-        
         glDisable(GL_TEXTURE_2D)
         glPopMatrix()
-        
-        # Marte em órbita circular
+
+        # Marte (Gouraud + textura)
         mars_orbit = 24 * self.elapsed_time
         mars_rotation = 350 * self.elapsed_time
-        mars_pos = (
-            18 * math.cos(math.radians(mars_orbit)),
-            0,
-            18 * math.sin(math.radians(mars_orbit))
-        )
-        # Desenhar órbita de Marte (círculo)
+        mars_x = 18 * math.cos(math.radians(mars_orbit))
+        mars_z = 18 * math.sin(math.radians(mars_orbit))
         if self.show_orbits:
             self.draw_orbit(18)
-        # Desenhar Marte na posição da órbita
-        glPushMatrix()
-        glTranslatef(mars_pos[0], mars_pos[1], mars_pos[2])
-        glRotatef(mars_rotation, 0, 1, 0)
-        glBindTexture(GL_TEXTURE_2D, self.textures['mars'])
-        glEnable(GL_TEXTURE_2D)
-        quadric = gluNewQuadric()
-        gluQuadricTexture(quadric, GL_TRUE)
-        gluSphere(quadric, 0.53, 16, 16)
-        gluDeleteQuadric(quadric)
-        glDisable(GL_TEXTURE_2D)
-        glPopMatrix()
-        
-        # Júpiter
+        self.draw_sphere_shader(self.gouraud_prog, position=[mars_x, 0, mars_z], scale=0.53, texture=self.textures['mars'])
+
+        # Júpiter (Gouraud + textura)
         jupiter_orbit = 13 * self.elapsed_time
         jupiter_rotation = 870 * self.elapsed_time
-        self.draw_planet('jupiter', 3.0, 25, jupiter_orbit, jupiter_rotation)
-        
-        # Saturno
+        jupiter_x = 25 * math.cos(math.radians(jupiter_orbit))
+        jupiter_z = 25 * math.sin(math.radians(jupiter_orbit))
+        if self.show_orbits:
+            self.draw_orbit(25)
+        self.draw_sphere_shader(self.gouraud_prog, position=[jupiter_x, 0, jupiter_z], scale=3.0, texture=self.textures['jupiter'])
+
+        # Saturno (Gouraud + textura)
         saturn_orbit = 9 * self.elapsed_time
         saturn_rotation = 820 * self.elapsed_time
-        saturn_pos = self.draw_planet('saturn', 2.5, 32, saturn_orbit, saturn_rotation)
-        
+        saturn_x = 32 * math.cos(math.radians(saturn_orbit))
+        saturn_z = 32 * math.sin(math.radians(saturn_orbit))
+        if self.show_orbits:
+            self.draw_orbit(32)
+        self.draw_sphere_shader(self.gouraud_prog, position=[saturn_x, 0, saturn_z], scale=2.5, texture=self.textures['saturn'])
+
         # Anéis de Saturno
         glPushMatrix()
-        glTranslatef(saturn_pos[0], saturn_pos[1], saturn_pos[2])
-        glRotatef(80, 1, 0, 0)  # Inclinar os anéis
-        
-        # Desenhar anéis como um disco fino
+        glTranslatef(saturn_x, 0, saturn_z)
+        glRotatef(80, 1, 0, 0)
         glDisable(GL_LIGHTING)
         glColor4f(1.0, 1.0, 0.8, 0.7)
-        
-        inner_radius = 3.0  # Raio interno dos anéis
-        outer_radius = 5.0  # Raio externo dos anéis
-        
+        inner_radius = 3.0
+        outer_radius = 5.0
         quadric = gluNewQuadric()
         gluDisk(quadric, inner_radius, outer_radius, 32, 4)
         gluDeleteQuadric(quadric)
-        
         glEnable(GL_LIGHTING)
         glPopMatrix()
-        
-        # Desenhar asteroides
+
+        # Asteroide (mantém como estava)
         if self.asteroid and self.asteroid.get('alive', False):
             glPushMatrix()
             glTranslatef(*self.asteroid['pos'])
@@ -833,7 +922,6 @@ class SolarExplorer:
             gluDeleteQuadric(quadric)
             glDisable(GL_TEXTURE_2D)
             glPopMatrix()
-            # Desenhar curva de Bézier do asteroide
             self.draw_bezier_orbit(self.asteroid_curve, steps=100)
     
     def setup_camera(self):
