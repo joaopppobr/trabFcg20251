@@ -134,3 +134,5 @@ def create_aabb_for_object(position, size):
     min_point = np.array(position) - half_size
     max_point = np.array(position) + half_size
     return AABB(min_point, max_point)
+
+# (Nenhuma alteração necessária, já implementa Sphere, AABB, sphere_sphere_collision, aabb_aabb_collision, sphere_point_collision)
