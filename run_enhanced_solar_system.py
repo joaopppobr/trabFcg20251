@@ -1,11 +1,14 @@
 """
-Explorador 3D do Sistema Solar - Versão Avançada
+Explorador 3D do Sistema Solar
 
 Este programa implementa uma visualização interativa do Sistema Solar utilizando:
 - Modelos 3D complexos
-- Shaders personalizados (Phong e Gouraud)
+- Shaders (Phong e Gouraud)
 - Detecção de colisões
-- Curvas de Bézier para órbitas
+- Curvas de Bézier para colisão de asteroides
+- Animação de órbitas planetárias
+- Câmera orbital e livre
+- Modelo complexo de satélite
 - Animação baseada em tempo
 
 """

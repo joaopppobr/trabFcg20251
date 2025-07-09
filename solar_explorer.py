@@ -13,7 +13,7 @@ from OpenGL.GL import (
     GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR, GL_RGBA, GL_UNSIGNED_BYTE, GL_RGB,
     GL_LINE_LOOP, GL_LINE_STRIP, GL_FLOAT, GL_FALSE, GL_ARRAY_BUFFER, GL_STATIC_DRAW, GL_ELEMENT_ARRAY_BUFFER,
     GL_TRIANGLES, GL_UNSIGNED_INT, GL_CW, GL_CCW, GL_TRUE, GL_TEXTURE0, GL_DEPTH_TEST, glLoadMatrixf,
-    glGetAttribLocation
+    glGetAttribLocation, glNormal3f, glTexCoord2f, glScalef
 )
 from OpenGL.GLU import (
     gluNewQuadric, gluQuadricTexture, gluSphere, gluDeleteQuadric, gluDisk
@@ -24,6 +24,7 @@ import time
 import random
 import os
 import ctypes
+import pywavefront
 
 
 # Importar os módulos que criamos
@@ -112,6 +113,15 @@ class SolarExplorer:
         self.gouraud_prog = get_gouraud_program()
         self.phong_prog = get_phong_program()
         self.sphere_vao, self.sphere_vbo, self.sphere_nbo, self.sphere_tbo, self.sphere_ebo, self.sphere_index_count = self.create_sphere_mesh(1.0, 32, 16)
+    
+        # Carregar modelo OBJ complexo (satélite)
+        self.satellite_model = pywavefront.Wavefront(
+            'models/satellite.obj',
+            collect_faces=True,
+            create_materials=True,
+            parse=True
+        )
+        self.satellite_texture = self.load_texture('satellite', 'textures/satellite.jpg')
     
     def load_textures(self):
         # Texturas para os planetas
@@ -833,14 +843,14 @@ class SolarExplorer:
             self.draw_orbit(8)
         self.draw_sphere_shader(self.gouraud_prog, position=[mercury_x, 0, mercury_z], scale=0.38, texture=self.textures['mercury'])
 
-        # Vênus (Gouraud + textura)
+        # Vênus (Phong + textura)
         venus_orbit = 35 * self.elapsed_time
         venus_rotation = 8 * self.elapsed_time
         venus_x = 10 * math.cos(math.radians(venus_orbit))
         venus_z = 10 * math.sin(math.radians(venus_orbit))
         if self.show_orbits:
             self.draw_orbit(10)
-        self.draw_sphere_shader(self.gouraud_prog, position=[venus_x, 0, venus_z], scale=0.95, texture=self.textures['venus'])
+        self.draw_sphere_shader(self.phong_prog, position=[venus_x, 0, venus_z], scale=0.95, texture=self.textures['venus'])
 
         # Terra (Gouraud + textura)
         earth_orbit = 29 * self.elapsed_time
@@ -910,7 +920,7 @@ class SolarExplorer:
         glEnable(GL_LIGHTING)
         glPopMatrix()
 
-        # Asteroide (mantém como estava)
+        # Asteroide
         if self.asteroid and self.asteroid.get('alive', False):
             glPushMatrix()
             glTranslatef(*self.asteroid['pos'])
@@ -923,34 +933,55 @@ class SolarExplorer:
             glDisable(GL_TEXTURE_2D)
             glPopMatrix()
             self.draw_bezier_orbit(self.asteroid_curve, steps=100)
+        
+        # --- Satélite OBJ complexo em órbita da Terra ---
+        self.draw_satellite(earth_x, earth_z)
     
+    def draw_satellite(self, earth_x, earth_z):
+        """Desenha o satélite (modelo OBJ) em órbita da Terra"""
+        glPushMatrix()
+        # Posição orbital do satélite em torno da Terra
+        sat_orbit = 60 * self.elapsed_time
+        sat_radius = 3.5
+        sat_x = earth_x + sat_radius * math.cos(math.radians(sat_orbit))
+        sat_z = earth_z + sat_radius * math.sin(math.radians(sat_orbit))
+        glTranslatef(sat_x, 0.5, sat_z)
+        glRotatef(sat_orbit * 2, 0, 1, 0)  # Rotação própria
+        glScalef(0.05, 0.05, 0.05)  # Escala menor para o satélite
+
+        # Bind textura do satélite
+        glBindTexture(GL_TEXTURE_2D, self.satellite_texture)
+        glEnable(GL_TEXTURE_2D)
+
+        # Desenhar o modelo OBJ
+        for name, mesh in self.satellite_model.meshes.items():
+            glBegin(GL_TRIANGLES)
+            for face in mesh.faces:
+                for vertex_i in face:
+                    vertex = self.satellite_model.vertices[vertex_i]
+                    if len(vertex) == 8:
+                        x, y, z, nx, ny, nz, u, v = vertex
+                        glNormal3f(nx, ny, nz)
+                        glTexCoord2f(u, v)
+                        glVertex3f(x, y, z)
+                    elif len(vertex) == 6:
+                        x, y, z, nx, ny, nz = vertex
+                        glNormal3f(nx, ny, nz)
+                        glVertex3f(x, y, z)
+                    else:
+                        x, y, z = vertex[:3]
+                        glVertex3f(x, y, z)
+            glEnd()
+
+        glDisable(GL_TEXTURE_2D)
+        glPopMatrix()
+
     def setup_camera(self):
         """Configura a câmera com base no modo atual"""
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
         # Corrigir: passar matriz transposta
         glLoadMatrixf(self.create_view_matrix().T.astype(np.float32))
-
-    # Adicionar o método run() que serve como ponto de entrada principal
-    def run(self):
-        """Loop principal do programa"""
-        running = True
-        
-        while running:
-            # Processar eventos do usuário
-            running = self.handle_events()
-            
-            # Atualizar lógica da simulação
-            self.update()
-            
-            # Renderizar cena
-            self.draw_scene()
-            
-            # Atualizar tela
-            pygame.display.flip()
-            pygame.time.wait(10)  # Limitar FPS
-        
-        pygame.quit()
 
     def bezier_cubic(self, t, p0, p1, p2, p3):
         """Calcula ponto na curva de Bézier cúbica"""
@@ -973,3 +1004,25 @@ class SolarExplorer:
             glVertex3f(pos[0], pos[1], pos[2])
         glEnd()
         glEnable(GL_LIGHTING)
+
+        
+    # Adicionar o método run() que serve como ponto de entrada principal
+    def run(self):
+        """Loop principal do programa"""
+        running = True
+        
+        while running:
+            # Processar eventos do usuário
+            running = self.handle_events()
+            
+            # Atualizar lógica da simulação
+            self.update()
+            
+            # Renderizar cena
+            self.draw_scene()
+            
+            # Atualizar tela
+            pygame.display.flip()
+            pygame.time.wait(10)  # Limitar FPS
+        
+        pygame.quit()
