@@ -143,7 +143,7 @@ A aplicação simula o Sistema Solar com planetas, luas, um asteroide animado e 
 
 - Modelos 3D do satélite Hubble: [Sketchfab](https://sketchfab.com/3d-models/satellite-d232fe608c874009bad9613c8093a972#download)
 - Texturas planetárias: Diversas fontes públicas
-- Desenvolvimento: [Seu Nome], [Nome do Parceiro]
+- Desenvolvimento: João Pedro Porto Pires de Oliveira
 - Assistência de IA: GitHub Copilot (auxílio em estruturas e sugestões de código)
 
 ---
